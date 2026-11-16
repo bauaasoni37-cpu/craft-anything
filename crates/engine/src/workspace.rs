@@ -1427,8 +1427,21 @@ fn forget_old_pastes(dir: &Path, keep: &[PathBuf]) {
     }
 }
 
-/// The default projects folder: `Documents/Craft Anything`, else `~/Craft Anything`.
+/// Set by a host that knows its private storage before the engine starts (the Android app).
+static DEFAULT_PROJECTS_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Use `dir` for new projects. Android calls this with a folder in its private data directory,
+/// where `Documents` and the home directory don't exist.
+pub fn set_default_projects_dir(dir: PathBuf) {
+    let _ = DEFAULT_PROJECTS_DIR.set(dir);
+}
+
+/// The default projects folder: a host's [`set_default_projects_dir`], then
+/// `Documents/Craft Anything`, else `~/Craft Anything`.
 pub fn default_projects_dir() -> PathBuf {
+    if let Some(dir) = DEFAULT_PROJECTS_DIR.get() {
+        return dir.clone();
+    }
     dirs::document_dir().or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from(".")).join("Craft Anything")
 }
 

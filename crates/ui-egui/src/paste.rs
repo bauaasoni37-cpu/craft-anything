@@ -7,6 +7,7 @@
 //! The clipboard is then read on a worker ([`read_pictures`]): copied picture files are attached
 //! as they are, and a copied image is saved as a PNG first.
 
+#[cfg(any(test, all(not(target_arch = "wasm32"), not(target_os = "android"))))]
 use std::path::{Path, PathBuf};
 
 /// What the events said about the paste shortcut, kept between passes.
@@ -86,7 +87,7 @@ pub fn picture_wanted(ctx: &egui::Context) -> bool {
 /// A copied picture a message can't take (over 20 MB, or not a picture inside whatever its name
 /// says) refuses the paste, rather than showing as attached and being left out when the message
 /// goes, or sent as a file the builder can't read. Blocking: run it on a worker.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 pub fn read_pictures(dir: &Path, keep: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut clipboard = arboard::Clipboard::new().map_err(|e| format!("{} {e}", crate::i18n::tr("The clipboard can't be read:")))?;
     let files: Vec<PathBuf> = clipboard.get().file_list().unwrap_or_default().into_iter().filter(|p| craft_anything_engine::workspace::is_picture(p)).collect();
@@ -101,7 +102,7 @@ pub fn read_pictures(dir: &Path, keep: &[PathBuf]) -> Result<Vec<PathBuf>, Strin
 }
 
 /// Copied picture files, if a message can take every one; else which one it can't.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn attachable(files: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
     use craft_anything_engine::workspace::{attachable_picture, picture_content};
     let name = |f: &Path| f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();

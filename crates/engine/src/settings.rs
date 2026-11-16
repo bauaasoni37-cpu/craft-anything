@@ -295,11 +295,25 @@ pub fn read_settings(text: &str) -> Result<Settings, String> {
     table.try_into::<Settings>().map_err(|e| e.to_string())
 }
 
-/// Where settings, logs and the engine store live: `CRAFT_ANYTHING_CONFIG_DIR`, then a portable
-/// `portable.txt` marker next to the executable, then the platform config dir.
+/// Set by a host that knows its private storage before the engine starts (the Android app).
+static CONFIG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Use `dir` for settings, logs and the engine store. Android calls this with its private data
+/// directory before the window opens; on the desktop the platform config dir is the default.
+pub fn set_config_dir(dir: PathBuf) {
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = CONFIG_DIR.set(dir);
+}
+
+/// Where settings, logs and the engine store live: `CRAFT_ANYTHING_CONFIG_DIR`, a host's
+/// [`set_config_dir`], a portable `portable.txt` marker next to the executable, then the
+/// platform config dir.
 pub fn config_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("CRAFT_ANYTHING_CONFIG_DIR") {
         return PathBuf::from(dir);
+    }
+    if let Some(dir) = CONFIG_DIR.get() {
+        return dir.clone();
     }
     if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf))
         && exe_dir.join("portable.txt").exists()

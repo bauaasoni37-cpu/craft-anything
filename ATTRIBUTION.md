@@ -38,7 +38,9 @@ texts are in the crate's `fonts/` folder.
 ## App icon (`assets/app-icon/`)
 
 The raven, the Crafting Apps' shared icon, made by the ArtCraft team; not open source, used on the
-brand terms below. See `assets/app-icon/LICENSE.txt`.
+brand terms below. See `assets/app-icon/LICENSE.txt`. The Android launcher icons in
+`apps/craft-anything-android/res/mipmap-*/ic_launcher.png` are renders of
+`assets/app-icon/craft-anything-1024.png` and take the same terms.
 
 ## Brand (`docs/brand/`)
 

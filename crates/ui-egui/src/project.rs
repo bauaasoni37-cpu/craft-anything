@@ -2069,6 +2069,7 @@ impl CraftApp {
             return;
         }
         // Where it goes is decided now: another project may be open by the time it's read.
+        #[cfg_attr(target_os = "android", allow(unused_variables))]
         let project = if attach {
             match &self.workspace {
                 Some(ws) => Some(ws.root.clone()),
@@ -2078,10 +2079,11 @@ impl CraftApp {
             None
         };
         // Pastes still attached somewhere are kept when old ones are cleared out.
+        #[cfg_attr(target_os = "android", allow(unused_variables, unused_mut))]
         let mut keep: Vec<PathBuf> = self.state.project_attachments.iter().chain(&self.state.make.pictures).cloned().collect();
         keep.extend(self.state.unsent.values().flat_map(|(_, files)| files.iter().cloned()));
         keep.extend(self.drafts.values().flat_map(|d| d.attachments.iter().cloned()));
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
         {
             let root = project.clone();
             let job = self.jobs.spawn(tr("Paste pictures"), false, move |_| {

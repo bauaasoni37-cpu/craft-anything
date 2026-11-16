@@ -1,0 +1,46 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [apk-build]
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install NDK and build tools
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMGR" --licenses >/dev/null || true
+          "$SDKMGR" --install "ndk;27.2.12479018" "build-tools;35.0.0" "platforms;android-35"
+      - name: Install cargo-apk
+        run: cargo install cargo-apk --version 0.10.0 --locked
+      - name: Build APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+        run: cargo apk build -p craft-anything-android --target aarch64-linux-android
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft-anything-android-apk
+          path: target/debug/apk/*.apk
+          if-no-files-found: error

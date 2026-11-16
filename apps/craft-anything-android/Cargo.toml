@@ -1,0 +1,72 @@
+[package]
+name = "craft-anything-android"
+description = "Craft Anything's Android entry point: the NativeActivity android_main trampoline that opens the shared app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+# NativeActivity loads this library and calls its android_main.
+crate-type = ["cdylib"]
+
+# This crate deliberately does not inherit the workspace lints. Android's NativeActivity ABI
+# requires an unmangled android_main export, and on edition 2024 that spelling
+# (`#[unsafe(no_mangle)]`) trips rust's `unsafe_code` lint, which the workspace forbids — there is
+# no safe spelling of a required export symbol. It therefore sets the workspace's *clippy* denials
+# itself (every one of them) and leaves `unsafe_code` alone. The shared app it opens keeps the
+# workspace lints unchanged.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+
+[dependencies]
+craft-anything = { path = "../craft-anything" }
+log = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# The NativeActivity handle the app's event loop needs; the same 0.6 instance eframe and winit
+# use, so the handle passes across crates as one type.
+android-activity = { version = "0.6", default-features = false, features = ["native-activity"] }
+
+[package.metadata.android]
+package = "ai.storyteller.craftanything"
+apk_name = "craft-anything"
+build_targets = ["aarch64-linux-android"]
+# The launcher icon: `res/mipmap-<density>/ic_launcher.png`, rendered from the app's own
+# `assets/app-icon/craft-anything-1024.png`. cargo-apk runs `aapt package -S res`, which is what
+# turns these into the APK's @mipmap/ic_launcher.
+resources = "res"
+# Files under shared storage are what this app investigates. Below API 30 the ordinary storage
+# grant reaches them; on API 30+ "All files access" does, and only after the person grants it in
+# system settings (the app cannot ask for it silently). The in-app pickers are native dialogs
+# (rfd), which have no Android backend yet, so this first build can read shared storage only
+# where a path is typed or opened from another app.
+uses_permission = [
+    { name = "android.permission.MANAGE_EXTERNAL_STORAGE" },
+    { name = "android.permission.READ_EXTERNAL_STORAGE", max_sdk_version = 29 },
+    { name = "android.permission.WRITE_EXTERNAL_STORAGE", max_sdk_version = 29 },
+]
+
+[package.metadata.android.sdk]
+min_sdk_version = 28
+target_sdk_version = 35
+
+[package.metadata.android.application]
+label = "Craft Anything"
+theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+icon = "@mipmap/ic_launcher"
+
+[package.metadata.android.application.activity]
+# Every configuration change the activity handles itself instead of a restart (the same list the
+# other Craft apps' Android builds use).
+config_changes = "orientation|keyboardHidden|screenSize|screenLayout|smallestScreenSize|density|layoutDirection|uiMode|fontScale|keyboard|navigation|touchscreen|locale|mcc|mnc|colorMode"
+label = "Craft Anything"
+launch_mode = "singleTask"
+# The workbench's panels need the width a landscape window gives them.
+orientation = "landscape"
+exported = true

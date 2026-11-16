@@ -1184,6 +1184,7 @@ dependencies = [
 name = "craft-anything"
 version = "0.6.1"
 dependencies = [
+ "android-activity",
  "craft-anything-ai",
  "craft-anything-engine",
  "craft-anything-platform",
@@ -1229,6 +1230,15 @@ dependencies = [
  "craft-anything-testkit",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "craft-anything-android"
+version = "0.6.1"
+dependencies = [
+ "android-activity",
+ "craft-anything",
+ "log",
 ]
 
 [[package]]
