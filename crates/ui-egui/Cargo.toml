@@ -43,6 +43,8 @@ eframe = { workspace = true, features = ["accesskit"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 eframe = { workspace = true, features = ["android-native-activity"] }
+# In-app file browser: Android has no native rfd dialog, and SAF URIs cannot be used as paths.
+egui-file-dialog = { version = "0.15", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The system menu bar (a safe API over AppKit); MIT OR Apache-2.0.

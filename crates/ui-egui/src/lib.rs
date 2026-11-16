@@ -338,6 +338,37 @@ pub enum Pick {
     AgentProgram,
 }
 
+#[cfg(target_os = "android")]
+fn android_shared_readable() -> bool {
+    std::fs::read_dir("/storage/emulated/0").is_ok()
+}
+
+#[cfg(target_os = "android")]
+fn android_start_dir() -> PathBuf {
+    let shared = PathBuf::from("/storage/emulated/0");
+    if android_shared_readable() { shared } else { craft_anything_engine::settings::config_dir() }
+}
+
+#[cfg(target_os = "android")]
+fn android_pick_title(pick: Pick) -> String {
+    match pick {
+        Pick::OpenFile => tr("Open an app or file"),
+        Pick::OpenFolder => tr("Open a folder or app bundle"),
+        Pick::GhidraDir => tr("Where is Ghidra installed?"),
+        Pick::TargetFile => tr("Pick the app, game or file to rebuild"),
+        Pick::TargetFolder => tr("Pick the app or game folder"),
+        Pick::ProjectsDir => tr("Where should new projects go?"),
+        Pick::ProjectFolder => tr("Pick the folder for this project"),
+        Pick::OwnProject => tr("Pick your project's folder"),
+        Pick::ExtraProjectsDir => tr("Pick a folder with projects in it"),
+        Pick::Pictures => tr("Pictures of the original"),
+        Pick::Attach => tr("Attach pictures"),
+        Pick::GameFolder => tr("Pick the game's folder"),
+        Pick::SavePicture => tr("Save the picture"),
+        Pick::AgentProgram => tr("Where is the program?"),
+    }
+}
+
 /// One open target, as the UI shows it.
 #[derive(Debug, Clone)]
 pub struct TargetInfo {
@@ -443,6 +474,19 @@ struct FirstFrames {
     done: Box<dyn FnOnce() + Send>,
 }
 
+/// The in-app file browser shown on Android, and what its result is for.
+#[cfg(target_os = "android")]
+struct AndroidPick {
+    dialog: egui_file_dialog::FileDialog,
+    what: AndroidPickWhat,
+}
+
+#[cfg(target_os = "android")]
+enum AndroidPickWhat {
+    Pick(Pick),
+    Report(String),
+}
+
 pub struct CraftApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) updates: updates::Updates,
@@ -504,6 +548,12 @@ pub struct CraftApp {
     pub drafts: std::collections::HashMap<u64, project::Draft>,
     /// A picture still being pasted into the open project's prompt box (`paste_pictures`).
     pub pending_paste: Option<project::PendingPaste>,
+    /// The in-app file browser Android uses instead of a native dialog.
+    #[cfg(target_os = "android")]
+    android_pick: Option<AndroidPick>,
+    /// Whether Android's shared-storage permission has already been explained.
+    #[cfg(target_os = "android")]
+    android_notice: bool,
     /// Picture-size checks still running for each project's prompt box, and for Make. Send and
     /// Make Start wait only for their own destination.
     pending_attach_checks: std::collections::BTreeMap<PathBuf, usize>,
@@ -639,6 +689,10 @@ impl CraftApp {
             runs: craft_anything_ai::rebuild::RunSet::new(craft_anything_engine::settings::BuildSettings::default().parallel),
             drafts: Default::default(),
             pending_paste: None,
+            #[cfg(target_os = "android")]
+            android_pick: None,
+            #[cfg(target_os = "android")]
+            android_notice: false,
             pending_attach_checks: Default::default(),
             pending_make_checks: 0,
             send_after_checks: Default::default(),
@@ -1175,9 +1229,7 @@ impl CraftApp {
         }
         #[cfg(target_os = "android")]
         {
-            let _ = pick;
-            self.toast(tr("Choosing files isn't available in the Android app yet."), true);
-            return;
+            self.start_android_pick(pick);
         }
         #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
         let suggested = game_files::suggested_name(self);
@@ -1207,6 +1259,150 @@ impl CraftApp {
             };
             Ok(Done::Picked { pick, path: handle.map(|h| h.path().to_path_buf()) })
         });
+    }
+
+    /// Android has no native file dialog and its storage-access framework returns URIs, not
+    /// paths, so picking happens in an egui window over the app. The result goes through the same
+    /// [`CraftApp::apply_pick`] a desktop dialog uses.
+    #[cfg(target_os = "android")]
+    fn start_android_pick(&mut self, pick: Pick) {
+        self.android_note_storage();
+        let start = match pick {
+            Pick::ProjectsDir | Pick::ProjectFolder | Pick::OwnProject | Pick::ExtraProjectsDir => {
+                let dir = self.settings.projects_dir();
+                if dir.is_dir() { dir } else { android_start_dir() }
+            }
+            _ => android_start_dir(),
+        };
+        let title = android_pick_title(pick);
+        let mut dialog = Self::android_dialog(&title, start);
+        if matches!(pick, Pick::Pictures | Pick::Attach) {
+            let name = tr("Pictures");
+            dialog = dialog.add_file_filter_extensions(&name, vec!["png", "jpg", "jpeg", "webp", "gif"]).default_file_filter(&name);
+            dialog.pick_multiple();
+        } else if pick == Pick::SavePicture {
+            let name = game_files::suggested_name(self).replace(['/', '\\'], "-");
+            dialog = dialog.default_file_name(&name);
+            dialog.save_file();
+        } else if matches!(pick, Pick::OpenFile | Pick::TargetFile | Pick::AgentProgram) {
+            dialog.pick_file();
+        } else {
+            dialog.pick_directory();
+        }
+        self.android_pick = Some(AndroidPick { dialog, what: AndroidPickWhat::Pick(pick) });
+    }
+
+    /// Save a report through the in-app browser (the desktop path uses `rfd`).
+    #[cfg(target_os = "android")]
+    fn start_android_report(&mut self, text: String, name: String) {
+        self.android_note_storage();
+        let name = name.replace(['/', '\\'], "-");
+        let title = tr("Save the report");
+        let mut dialog = Self::android_dialog(&title, android_start_dir()).default_file_name(&name);
+        dialog = dialog.add_file_filter_extensions("Markdown", vec!["md"]).default_file_filter("Markdown");
+        dialog.save_file();
+        self.android_pick = Some(AndroidPick { dialog, what: AndroidPickWhat::Report(text) });
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_note_storage(&mut self) {
+        if self.android_notice || android_shared_readable() {
+            return;
+        }
+        self.android_notice = true;
+        self.toast(tr("To open files on the phone, allow All files access for Craft Anything in Android Settings → Apps → Special app access."), true);
+    }
+
+    /// A browser that opens at a useful folder and can reach shared storage when it is granted.
+    #[cfg(target_os = "android")]
+    fn android_dialog(title: &str, start: PathBuf) -> egui_file_dialog::FileDialog {
+        egui_file_dialog::FileDialog::new()
+            .title(title)
+            .initial_directory(start)
+            .as_modal(true)
+            .default_size([900.0, 600.0])
+            .min_size([360.0, 280.0])
+            .add_quick_access("Android", |qa| {
+                qa.add_path("Shared storage", "/storage/emulated/0");
+                qa.add_path("App storage", craft_anything_engine::settings::config_dir());
+            })
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_file_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut state) = self.android_pick.take() else { return };
+        state.dialog.update(ctx);
+        let picked = state.dialog.take_picked();
+        let multiple = if picked.is_some() { None } else { state.dialog.take_picked_multiple() };
+        if let Some(path) = picked {
+            match state.what {
+                AndroidPickWhat::Pick(pick) => match pick {
+                    Pick::Pictures => self.add_pictures(vec![path]),
+                    Pick::Attach => self.attach(vec![path]),
+                    _ => self.apply_pick(pick, Some(path)),
+                },
+                AndroidPickWhat::Report(text) => self.write_report(path, text),
+            }
+            return;
+        }
+        if let Some(paths) = multiple {
+            match state.what {
+                AndroidPickWhat::Pick(Pick::Pictures) => self.add_pictures(paths),
+                AndroidPickWhat::Pick(Pick::Attach) => self.attach(paths),
+                _ => {}
+            }
+            return;
+        }
+        if state.dialog.state() == &egui_file_dialog::DialogState::Open {
+            self.android_pick = Some(state);
+            ctx.request_repaint();
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn write_report(&mut self, path: PathBuf, text: String) {
+        let engine = self.engine.clone();
+        self.jobs.spawn("Export report", true, move |_| {
+            // Written by the core_report_save tool, as any other client would.
+            let params = json!({"path": path.display().to_string(), "text": text});
+            engine.call("core_report_save", params, CallOptions::new(Caller::Ui)).map_err(|e| e.message)?;
+            Ok(Done::Wrote { what: "report".into(), path: Some(path) })
+        });
+    }
+
+    /// What a finished file dialog was for.
+    fn apply_pick(&mut self, pick: Pick, path: Option<PathBuf>) {
+        let Some(path) = path else { return };
+        match pick {
+            Pick::OpenFile | Pick::OpenFolder => self.open_path(path),
+            Pick::GhidraDir => {
+                self.settings.engines.ghidra.install_dir = Some(path);
+                self.settings_changed();
+            }
+            Pick::TargetFile | Pick::TargetFolder => {
+                self.state.make.target = craft_anything_engine::workspace::TargetRef::Local { path: path.clone() };
+                self.state.make.game = pick == Pick::TargetFolder;
+                self.state.make.editing_url = false;
+                self.state.make.builder = None;
+                self.detect_game_engine(path);
+            }
+            Pick::ProjectsDir => {
+                self.settings.projects_dir = Some(path);
+                self.settings_changed();
+                self.refresh_projects();
+            }
+            Pick::ProjectFolder => folders::picked(self, path),
+            Pick::OwnProject => folders::picked_own(self, path),
+            Pick::ExtraProjectsDir => self.add_project_folder(path),
+            Pick::GameFolder => game_files::folder_picked(self, path),
+            Pick::SavePicture => game_files::save_to(self, path),
+            Pick::AgentProgram => {
+                if let Some(name) = self.picking_program_for.take() {
+                    self.set_agent_program(&name, Some(path.display().to_string()));
+                }
+            } // Several files: these come back as Done::Pictures / Done::ToAttach.
+            Pick::Pictures | Pick::Attach => {}
+        }
     }
 
     /// The overview tool used for a "first look" and for answering without an AI.
@@ -1515,9 +1711,7 @@ impl CraftApp {
         let name = self.view.active_target().map(|t| format!("{} report.md", t.name)).unwrap_or_else(|| "Craft Anything report.md".into());
         #[cfg(target_os = "android")]
         {
-            let _ = (md, name);
-            self.toast(tr("Exporting a report isn't available in the Android app yet."), true);
-            return;
+            self.start_android_report(md, name);
         }
         #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
         let engine = self.engine.clone();
@@ -1766,40 +1960,7 @@ impl CraftApp {
                 Err(e) if e.code == ErrorCode::Cancelled => self.toast(i18n::trf("Stopped adding {name}.", &[("name", &name)]), false),
                 Err(e) => self.toast(e.for_people(), true),
             },
-            Done::Picked { pick, path } => {
-                if let Some(path) = path {
-                    match pick {
-                        Pick::OpenFile | Pick::OpenFolder => self.open_path(path),
-                        Pick::GhidraDir => {
-                            self.settings.engines.ghidra.install_dir = Some(path);
-                            self.settings_changed();
-                        }
-                        Pick::TargetFile | Pick::TargetFolder => {
-                            self.state.make.target = craft_anything_engine::workspace::TargetRef::Local { path: path.clone() };
-                            self.state.make.game = pick == Pick::TargetFolder;
-                            self.state.make.editing_url = false;
-                            self.state.make.builder = None;
-                            self.detect_game_engine(path);
-                        }
-                        Pick::ProjectsDir => {
-                            self.settings.projects_dir = Some(path);
-                            self.settings_changed();
-                            self.refresh_projects();
-                        }
-                        Pick::ProjectFolder => folders::picked(self, path),
-                        Pick::OwnProject => folders::picked_own(self, path),
-                        Pick::ExtraProjectsDir => self.add_project_folder(path),
-                        Pick::GameFolder => game_files::folder_picked(self, path),
-                        Pick::SavePicture => game_files::save_to(self, path),
-                        Pick::AgentProgram => {
-                            if let Some(name) = self.picking_program_for.take() {
-                                self.set_agent_program(&name, Some(path.display().to_string()));
-                            }
-                        } // Several files: these come back as Done::Pictures / Done::ToAttach.
-                        Pick::Pictures | Pick::Attach => {}
-                    }
-                }
-            }
+            Done::Picked { pick, path } => self.apply_pick(pick, path),
             Done::Pictures(files) => self.add_pictures(files),
             Done::ToAttach(files) => self.attach(files),
             Done::Pasted { project, files, refused } => self.pasted(project, files, refused),
@@ -2235,6 +2396,8 @@ impl eframe::App for CraftApp {
             }
         }
         self.show(ui);
+        #[cfg(target_os = "android")]
+        self.android_file_dialog(ui.ctx());
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
